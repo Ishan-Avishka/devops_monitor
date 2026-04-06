@@ -388,8 +388,12 @@ class ServerManagerPanel(ttk.Frame):
                         if m.get("disk_percent") is not None:
                             alert_engine.check(srv_name, "disk_percent",
                                                m["disk_percent"])
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        db.safe_write_log(
+                            "ERROR",
+                            "ServerManager",
+                            f"Polling failed for {client.server.get('name', sid)}: {e}",
+                        )
             time.sleep(self.POLL_INTERVAL)
 
     def destroy(self):

@@ -167,8 +167,8 @@ class CPUMonitor(ttk.Frame):
         try:
             import platform
             info["model"] = platform.processor()[:40] or "N/A"
-        except Exception:
-            pass
+        except Exception as e:
+            db.safe_write_log("WARNING", "CPUMonitor", f"CPU model detection failed: {e}")
         return info
 
     def _collect(self, static: dict, first: bool):

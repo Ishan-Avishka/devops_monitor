@@ -2,11 +2,17 @@
 ssh_client.py - Paramiko-based SSH connection manager with command execution.
 """
 import threading
-import paramiko
 import time
 import socket
-from typing import Optional
+from typing import Optional, Any
 import database as db
+
+try:
+    import paramiko
+    PARAMIKO_AVAILABLE = True
+except ImportError:
+    paramiko = None
+    PARAMIKO_AVAILABLE = False
 
 
 class SSHClient:
@@ -19,7 +25,7 @@ class SSHClient:
 
     def __init__(self, server: dict):
         self._server = server
-        self._client: Optional[paramiko.SSHClient] = None
+        self._client: Optional[Any] = None
         self._lock = threading.Lock()
         self._connected = False
         self._error: str = ""
@@ -28,6 +34,12 @@ class SSHClient:
     def connect(self) -> bool:
         with self._lock:
             try:
+                if not PARAMIKO_AVAILABLE:
+                    self._connected = False
+                    self._error = "paramiko is not installed"
+                    db.safe_write_log("ERROR", self._server["name"], self._error)
+                    return False
+
                 self._client = paramiko.SSHClient()
                 self._client.set_missing_host_key_policy(
                     paramiko.AutoAddPolicy())
@@ -68,8 +80,8 @@ class SSHClient:
             if self._client:
                 try:
                     self._client.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    db.safe_write_log("WARNING", self._server["name"], f"SSH close failed: {e}")
                 self._client = None
             self._connected = False
 

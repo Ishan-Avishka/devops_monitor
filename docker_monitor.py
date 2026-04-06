@@ -34,6 +34,7 @@ class DockerMonitor(ttk.Frame):
         self.configure(style="TFrame")
         self._running = True
         self._docker  = _get_client()
+        self._refresh_inflight = False
         self._build_ui()
         threading.Thread(target=self._poll_loop, daemon=True).start()
 
@@ -163,9 +164,13 @@ class DockerMonitor(ttk.Frame):
                 text="Docker not running", fg=COLORS["accent_red"]))
             return
 
+        if self._refresh_inflight:
+            return
+
         threading.Thread(target=self._fetch_data, daemon=True).start()
 
     def _fetch_data(self):
+        self._refresh_inflight = True
         try:
             containers = self._docker.containers.list(all=True)
             images     = self._docker.images.list()
@@ -187,8 +192,12 @@ class DockerMonitor(ttk.Frame):
                     mem_l = stats["memory_stats"].get("limit", 1)
                     mem_str = (f"{format_bytes(mem_u)} / "
                                f"{format_bytes(mem_l)}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    db.safe_write_log(
+                        "WARNING",
+                        "DockerMonitor",
+                        f"Stats unavailable for {c.name}: {e}",
+                    )
 
                 ports_raw = c.ports
                 ports = ", ".join(
@@ -210,8 +219,11 @@ class DockerMonitor(ttk.Frame):
             self.after(0, lambda: self._update_ui(data, len(images)))
         except Exception as e:
             db.write_log("ERROR", "DockerMonitor", str(e))
-            self.after(0, lambda: self._status_label.config(
-                text=f"Error: {e}", fg=COLORS["accent_red"]))
+            err = str(e)
+            self.after(0, lambda m=err: self._status_label.config(
+                text=f"Error: {m}", fg=COLORS["accent_red"]))
+        finally:
+            self._refresh_inflight = False
 
     def _update_ui(self, data, n_images):
         ts = datetime.datetime.now().strftime("%H:%M:%S")
@@ -253,7 +265,8 @@ class DockerMonitor(ttk.Frame):
                 time.sleep(1)
                 self._manual_refresh()
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Docker Error", str(e)))
+                err = str(e)
+                self.after(0, lambda m=err: messagebox.showerror("Docker Error", m))
         threading.Thread(target=_do, daemon=True).start()
 
     def _start_container(self):   self._container_action("start")
@@ -270,7 +283,8 @@ class DockerMonitor(ttk.Frame):
                 logs = c.logs(tail=200).decode(errors="replace")
                 self.after(0, lambda: self._show_logs(logs))
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Log Error", str(e)))
+                err = str(e)
+                self.after(0, lambda m=err: messagebox.showerror("Log Error", m))
         threading.Thread(target=_fetch, daemon=True).start()
 
     def _tail_logs(self):
@@ -283,7 +297,8 @@ class DockerMonitor(ttk.Frame):
                 logs = c.logs(tail=100).decode(errors="replace")
                 self.after(0, lambda: self._show_logs(logs))
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Log Error", str(e)))
+                err = str(e)
+                self.after(0, lambda m=err: messagebox.showerror("Log Error", m))
         threading.Thread(target=_fetch, daemon=True).start()
 
     def _show_logs(self, logs: str):

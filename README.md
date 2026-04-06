@@ -106,6 +106,7 @@ Password: admin123
 ```
 
 > Change these immediately in **Settings → User Management** after first login.
+> Login attempts are rate-limited and temporarily locked after repeated failures.
 
 ---
 
@@ -191,6 +192,7 @@ devops-monitor
 - Per-metric alert thresholds (with live sliders)
 - Enable/disable Docker monitoring and notifications
 - User management: add/delete users with role assignment (admin/operator/viewer)
+- Diagnostics panel: DB path, integration availability, and recent error logs
 
 ---
 
@@ -211,7 +213,7 @@ AlertEngine (singleton)
   └─ notifies observers             ← Dashboard toast, AlertsPanel refresh
 
 Database (SQLite at ~/.devops_monitor/devops.db)
-  └─ users, servers, alerts, alert_rules, settings, logs
+  └─ users, servers, alerts, alert_rules, settings, logs, auth_failures
 ```
 
 ---
@@ -250,10 +252,31 @@ sudo usermod -aG docker $USER
 
 ## 🔐 Security Notes
 
-- Passwords are stored as SHA-256 hashes in the local SQLite database
-- SSH passwords/keys are stored in plaintext in the local DB — use key-based auth where possible
+- Passwords are stored as bcrypt hashes (legacy SHA-256 hashes are migrated on successful login)
+- SSH passwords and key paths are encrypted at rest in the local SQLite DB (Fernet)
+- Authentication includes login lockout after repeated failed attempts
 - The database lives at `~/.devops_monitor/devops.db` (user-private path)
+- Encryption key is stored at `~/.devops_monitor/secret.key` (chmod 600)
 - This tool is intended for trusted local/internal network use
+
+---
+
+## ✅ Tests & CI
+
+Run local checks:
+
+```bash
+python -m compileall -q .
+pytest -q
+```
+
+GitHub Actions CI includes:
+
+- Ruff syntax-focused lint checks
+- Mypy type checks on core modules
+- Import smoke test
+- Full project compile check
+- Pytest smoke/integration tests
 
 ---
 

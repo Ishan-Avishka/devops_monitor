@@ -6,6 +6,7 @@ from tkinter import ttk
 import time
 import datetime
 import threading
+import queue
 
 
 # ─── COLOR PALETTE ────────────────────────────────────────────────────────────
@@ -309,6 +310,34 @@ def run_in_thread(func, *args, daemon=True, **kwargs):
     t = threading.Thread(target=func, args=args, kwargs=kwargs, daemon=daemon)
     t.start()
     return t
+
+
+class UiEventQueue:
+    """Thread-safe queue to marshal callbacks onto Tk's main thread."""
+
+    def __init__(self, widget: tk.Misc, interval_ms: int = 100):
+        self._widget = widget
+        self._interval = interval_ms
+        self._queue: queue.SimpleQueue[tuple] = queue.SimpleQueue()
+        self._running = True
+        self._pump()
+
+    def post(self, callback, *args, **kwargs):
+        self._queue.put((callback, args, kwargs))
+
+    def stop(self):
+        self._running = False
+
+    def _pump(self):
+        if not self._running:
+            return
+        try:
+            while True:
+                callback, args, kwargs = self._queue.get_nowait()
+                callback(*args, **kwargs)
+        except queue.Empty:
+            pass
+        self._widget.after(self._interval, self._pump)
 
 
 class RingBuffer:

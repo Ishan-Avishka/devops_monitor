@@ -3,6 +3,7 @@ settings.py - Application settings panel.
 """
 import tkinter as tk
 from tkinter import ttk, messagebox
+import importlib.util
 from utils import COLORS, FONTS, make_card
 import database as db
 
@@ -67,6 +68,25 @@ class SettingsPanel(ttk.Frame):
         ttk.Button(user_btns, text="Refresh",
                    command=self._load_users).pack(side="left", padx=3)
 
+        # Diagnostics card
+        diag_card, diag_inner = make_card(self, "Diagnostics")
+        diag_card.pack(fill="x", pady=(0, 10))
+        diag_btns = tk.Frame(diag_inner, bg=COLORS["bg_card"])
+        diag_btns.pack(fill="x", pady=(0, 4))
+        ttk.Button(diag_btns, text="Refresh Diagnostics",
+                   command=self._refresh_diagnostics).pack(side="left")
+        self._diag_text = tk.Text(
+            diag_inner,
+            bg=COLORS["bg_panel"],
+            fg=COLORS["text_primary"],
+            font=FONTS["mono_small"],
+            relief="flat",
+            height=8,
+            wrap="word",
+            state="disabled",
+        )
+        self._diag_text.pack(fill="x")
+
         # Save button
         save_row = tk.Frame(self, bg=COLORS["bg_dark"])
         save_row.pack(fill="x", pady=10)
@@ -85,7 +105,11 @@ class SettingsPanel(ttk.Frame):
                  font=FONTS["small"], width=26, anchor="e").pack(
             side="left", padx=(4, 8))
 
-        var = tk.StringVar(value=default)
+        var: tk.Variable
+        if widget_type == "int":
+            var = tk.IntVar(value=int(default))
+        else:
+            var = tk.StringVar(value=default)
         self._setting_vars[key] = var
 
         if widget_type == "bool":
@@ -119,8 +143,15 @@ class SettingsPanel(ttk.Frame):
         current = db.get_all_settings()
         for key, var in self._setting_vars.items():
             if key in current:
-                var.set(current[key])
+                if isinstance(var, tk.IntVar):
+                    try:
+                        var.set(int(float(current[key])))
+                    except ValueError:
+                        pass
+                else:
+                    var.set(current[key])
         self._load_users()
+        self._refresh_diagnostics()
 
     def _load_users(self):
         for item in self._user_tree.get_children():
@@ -202,3 +233,24 @@ class SettingsPanel(ttk.Frame):
         if messagebox.askyesno("Delete", "Delete this user?"):
             db.delete_user(uid)
             self._load_users()
+
+    def _refresh_diagnostics(self):
+        lines = [
+            f"DB path: {db.DB_PATH}",
+            f"Docker SDK: {'available' if importlib.util.find_spec('docker') else 'missing'}",
+            f"Paramiko SSH: {'available' if importlib.util.find_spec('paramiko') else 'missing'}",
+            "Recent errors:",
+        ]
+        errors = db.get_last_error_logs(limit=5)
+        if not errors:
+            lines.append("  (none)")
+        else:
+            for item in errors:
+                lines.append(
+                    f"  [{item['ts'][:19]}] {item['source']}: {item['message'][:90]}"
+                )
+
+        self._diag_text.configure(state="normal")
+        self._diag_text.delete(1.0, "end")
+        self._diag_text.insert("end", "\n".join(lines))
+        self._diag_text.configure(state="disabled")

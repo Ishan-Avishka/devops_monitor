@@ -5,7 +5,7 @@ import threading
 import datetime
 import tkinter as tk
 from tkinter import ttk
-from utils import COLORS, FONTS, make_card, sep, StatusDot, timestamp_now
+from utils import COLORS, FONTS, make_card, sep, StatusDot, timestamp_now, UiEventQueue
 import database as db
 
 
@@ -40,6 +40,10 @@ class AlertEngine:
     def register_observer(self, cb):
         """cb(alert_dict) will be called on new alerts."""
         self._observers.append(cb)
+
+    def unregister_observer(self, cb):
+        if cb in self._observers:
+            self._observers.remove(cb)
 
     def check(self, server: str, metric: str, value: float):
         for rule in self._rules:
@@ -79,8 +83,8 @@ class AlertEngine:
                 for obs in self._observers:
                     try:
                         obs(alert)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        db.safe_write_log("ERROR", "AlertEngine", f"Observer failed: {e}")
 
 
 alert_engine = AlertEngine()
@@ -97,6 +101,7 @@ class AlertsPanel(ttk.Frame):
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
         self.configure(style="TFrame")
+        self._ui_queue = UiEventQueue(self)
         self._build_ui()
         alert_engine.register_observer(self._on_new_alert)
         self._refresh()
@@ -214,10 +219,39 @@ class AlertsPanel(ttk.Frame):
 
     def _on_new_alert(self, alert: dict):
         """Called by AlertEngine on main or background thread."""
+        self._ui_queue.post(self._append_alert_row, alert)
+
+    def _append_alert_row(self, alert: dict):
+        if self._show_acked_flag:
+            return
+        sev = alert.get("severity", "info")
+        self._tree.insert(
+            "",
+            0,
+            values=(
+                alert.get("ts", "")[:19],
+                alert.get("server", "local"),
+                alert.get("metric", ""),
+                f"{float(alert.get('value', 0)):.1f}",
+                sev.upper(),
+                alert.get("message", ""),
+            ),
+            tags=(sev,),
+        )
         try:
+            total = int(self._total_var.get()) + 1
+            self._total_var.set(str(total))
+            if sev == "critical":
+                self._crit_var.set(str(int(self._crit_var.get()) + 1))
+            elif sev == "warning":
+                self._warn_var.set(str(int(self._warn_var.get()) + 1))
+        except ValueError:
             self._refresh()
-        except Exception:
-            pass
+
+    def destroy(self):
+        alert_engine.unregister_observer(self._on_new_alert)
+        self._ui_queue.stop()
+        super().destroy()
 
 
 # ─── NOTIFICATION TOAST ───────────────────────────────────────────────────────

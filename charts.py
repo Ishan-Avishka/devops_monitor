@@ -102,8 +102,8 @@ class LiveLineChart(tk.Frame):
     def destroy(self):
         try:
             self._ani.event_source.stop()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[WARNING] LiveLineChart stop failed: {e}")
         super().destroy()
 
 
@@ -252,6 +252,6 @@ class NetworkChart(tk.Frame):
     def destroy(self):
         try:
             self._ani.event_source.stop()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[WARNING] NetworkChart stop failed: {e}")
         super().destroy()

@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-and-quality:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pytest ruff mypy
+
+      - name: Lint (syntax-focused)
+        run: ruff check . --select E9,F63,F7,F82
+
+      - name: Type check (core modules)
+        run: mypy --ignore-missing-imports --check-untyped-defs database.py
+
+      - name: Import smoke check
+        run: python -c "import database; database.init_db(); import alerts, charts, cpu_monitor, dashboard, disk_monitor, docker_monitor, login, logs_viewer, memory_monitor, network_monitor, server_manager, settings, ssh_client, utils"
+
+      - name: Compile all modules
+        run: python -m compileall -q .
+
+      - name: Run tests
+        run: pytest -q

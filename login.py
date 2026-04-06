@@ -122,12 +122,12 @@ class LoginWindow(tk.Tk):
         self.update()
 
         def _auth():
-            user = db.verify_user(username, password)
-            self.after(0, lambda: self._on_auth_result(user))
+            user, err = db.authenticate_user(username, password)
+            self.after(0, lambda: self._on_auth_result(user, err))
 
         threading.Thread(target=_auth, daemon=True).start()
 
-    def _on_auth_result(self, user):
+    def _on_auth_result(self, user, err_msg=None):
         self._login_btn.configure(state="normal", text="▶  LOGIN")
         if user:
             self._user_data = user
@@ -135,7 +135,7 @@ class LoginWindow(tk.Tk):
                          f"Login: {user['username']} ({user['role']})")
             self.destroy()
         else:
-            self._status_var.set("Invalid credentials. Try again.")
+            self._status_var.set(err_msg or "Invalid credentials. Try again.")
             self._pass_entry.delete(0, "end")
             self._pass_entry.focus()
 

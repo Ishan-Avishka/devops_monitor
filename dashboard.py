@@ -7,8 +7,9 @@ import threading
 import time
 import datetime
 import psutil
+import importlib.util
 from utils import (COLORS, FONTS, apply_theme, make_card,
-                   sep, StatusDot, format_bytes, format_uptime)
+                   sep, StatusDot, format_bytes, format_uptime, UiEventQueue)
 import database as db
 from alerts import alert_engine, NotificationToast
 
@@ -48,6 +49,7 @@ class Dashboard(tk.Tk):
         self._current_page = None
         self._alert_count  = tk.StringVar(value="0")
         self._notif_enabled = bool(int(db.get_setting("notifications", "1")))
+        self._ui_queue = UiEventQueue(self)
 
         self._build_topbar()
         self._build_sidebar()
@@ -160,6 +162,30 @@ class Dashboard(tk.Tk):
                      bg=COLORS["bg_panel"], fg=color,
                      font=FONTS["mono_small"]).pack(side="left")
 
+        sep(self._sidebar).pack(fill="x", pady=8, padx=8)
+        integ = tk.Frame(self._sidebar, bg=COLORS["bg_panel"])
+        integ.pack(fill="x", side="bottom", padx=8, pady=(0, 6))
+        tk.Label(integ, text="Integrations",
+                 bg=COLORS["bg_panel"], fg=COLORS["text_muted"],
+                 font=FONTS["label"]).pack(anchor="w")
+        self._add_integration_badge(
+            integ,
+            "Docker SDK",
+            bool(importlib.util.find_spec("docker")),
+        )
+        self._add_integration_badge(
+            integ,
+            "Paramiko SSH",
+            bool(importlib.util.find_spec("paramiko")),
+        )
+
+    def _add_integration_badge(self, parent, name: str, available: bool):
+        color = COLORS["accent_green"] if available else COLORS["accent_red"]
+        state = "ready" if available else "missing"
+        tk.Label(parent, text=f"• {name}: {state}",
+                 bg=COLORS["bg_panel"], fg=color,
+                 font=FONTS["label"]).pack(anchor="w")
+
     def _make_nav_btn(self, icon: str, label: str, key: str) -> tk.Label:
         frame = tk.Frame(self._sidebar, bg=COLORS["bg_panel"],
                          cursor="hand2")
@@ -236,7 +262,15 @@ class Dashboard(tk.Tk):
 
         scroll_frame = _ScrollableFrame(self._main)
         scroll_frame.pack(fill="both", expand=True)
+        loading = tk.Label(scroll_frame.inner,
+                           text="Loading panel...",
+                           bg=COLORS["bg_dark"], fg=COLORS["text_muted"],
+                           font=FONTS["body"])
+        loading.pack(pady=30)
+        self.update_idletasks()
+
         panel = self._get_panel(key, scroll_frame.inner)
+        loading.destroy()
         panel.pack(fill="both", expand=True, padx=16, pady=12)
 
     def _get_panel(self, key: str, host: tk.Frame) -> tk.Frame:
@@ -280,13 +314,20 @@ class Dashboard(tk.Tk):
 
                 alerts = db.get_alerts(limit=1, acknowledged=False)
                 last   = alerts[0]["message"][:40] if alerts else "No alerts"
-                n_alerts = len(db.get_alerts(limit=999, acknowledged=False))
+                n_alerts = db.get_active_alert_count()
 
-                self.after(0, lambda c=cpu, m=mem, r=rd, u=ud,
-                                      d=disk, la=last, na=n_alerts:
-                    self._update_status(c, m, r, u, d, la, na))
-            except Exception:
-                pass
+                self._ui_queue.post(
+                    self._update_status,
+                    cpu,
+                    mem,
+                    rd,
+                    ud,
+                    disk,
+                    last,
+                    n_alerts,
+                )
+            except Exception as e:
+                db.safe_write_log("ERROR", "Dashboard", f"Status loop failed: {e}")
             time.sleep(self.STATUS_INTERVAL)
 
     def _update_status(self, cpu, mem, recv, sent, disk, last_alert, n_alerts):
@@ -309,11 +350,12 @@ class Dashboard(tk.Tk):
             ))
 
     def _on_close(self):
+        self._ui_queue.stop()
         for widget in self._main.winfo_children():
             try:
                 widget.destroy()
-            except Exception:
-                pass
+            except Exception as e:
+                db.safe_write_log("WARNING", "Dashboard", f"Widget destroy failed: {e}")
         self.destroy()
 
 
@@ -336,9 +378,22 @@ class _ScrollableFrame(tk.Frame):
                             scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>",
                     lambda e: canvas.itemconfig(win_id, width=e.width))
-        self.bind_all("<MouseWheel>",
-                      lambda e: canvas.yview_scroll(
-                          -1 * (e.delta // 120), "units"))
+        self._canvas = canvas
+        canvas.bind("<Enter>", self._bind_wheel)
+        canvas.bind("<Leave>", self._unbind_wheel)
+
+    def _bind_wheel(self, _event):
+        self._canvas.bind("<MouseWheel>", self._on_mousewheel)
+
+    def _unbind_wheel(self, _event):
+        self._canvas.unbind("<MouseWheel>")
+
+    def _on_mousewheel(self, event):
+        self._canvas.yview_scroll(-1 * (event.delta // 120), "units")
+
+    def destroy(self):
+        self._canvas.unbind("<MouseWheel>")
+        super().destroy()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -504,13 +559,16 @@ class OverviewPanel(ttk.Frame):
         # Alerts
         self._alert_text.configure(state="normal")
         self._alert_text.delete(1.0, "end")
-        for a in alerts:
-            sev = a.get("severity", "info")
-            tag = sev if sev in ("critical","warning") else ""
-            self._alert_text.insert(
-                "end",
-                f"[{a['ts'][:19]}] {sev.upper():<8} {a['message']}\n",
-                tag)
+        if not alerts:
+            self._alert_text.insert("end", "No active alerts.\n")
+        else:
+            for a in alerts:
+                sev = a.get("severity", "info")
+                tag = sev if sev in ("critical","warning") else ""
+                self._alert_text.insert(
+                    "end",
+                    f"[{a['ts'][:19]}] {sev.upper():<8} {a['message']}\n",
+                    tag)
         self._alert_text.configure(state="disabled")
 
     def destroy(self):

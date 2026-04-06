@@ -208,8 +208,8 @@ class LogsViewer(ttk.Frame):
             if self._live_tail.get():
                 try:
                     self.after(0, self._refresh)
-                except Exception:
-                    pass
+                except Exception as e:
+                    db.safe_write_log("WARNING", "LogsViewer", f"Auto refresh failed: {e}")
             time.sleep(self.REFRESH_INTERVAL)
 
     def destroy(self):
